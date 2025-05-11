@@ -18,12 +18,10 @@ CONTINUE_BUTTON_PAGE1_ID = "j_id_60:aboutThisServiceForm:continueButton"
 
 # Terms and Conditions Page
 TERMS_PAGE_URL_FRAGMENT = "TermsAndConditions.xhtml"
-# No checkbox mentioned by user, so we can set this to None or a non-matching string to skip it.
 TERMS_AGREE_CHECKBOX_SELECTOR = None # Set to None as no checkbox was identified for T&C
-# Exact ID for the "Accept" button on the T&C page
-TERMS_CONTINUE_BUTTON_SELECTOR = "id=termsAndConditions:TermsAndConditionsForm:acceptButton"
+TERMS_CONTINUE_BUTTON_SELECTOR = "id=termsAndConditions:TermsAndConditionsForm:acceptButton" # Exact ID
 
-PAGE2_URL_FRAGMENT = "CleanBookingDE.xhtml" # The page after T&C
+PAGE2_URL_FRAGMENT = "CleanBookingDE.xhtml"
 DL_NUMBER_INPUT_ID = "CleanBookingDEForm:dlNumber"
 CONTACT_NAME_INPUT_ID = "CleanBookingDEForm:contactName"
 CONTACT_PHONE_INPUT_ID = "CleanBookingDEForm:contactPhone"
@@ -120,13 +118,13 @@ def run_bot():
 
             # === Handle Terms and Conditions Page ===
             print("Looking for Terms and Conditions page...")
-            page.wait_for_url(f"**/{TERMS_PAGE_URL_FRAGMENT}**", timeout=30000) 
-            print(f"On Terms and Conditions page. URL: {page.url}")
+            # MODIFIED LINE HERE: Changed waitUntil condition
+            page.wait_for_url(f"**/{TERMS_PAGE_URL_FRAGMENT}**", timeout=30000, waitUntil='domcontentloaded')
+            print(f"On Terms and Conditions page (DOM content loaded). URL: {page.url}")
 
-            # Checkbox interaction is now skipped if TERMS_AGREE_CHECKBOX_SELECTOR is None
             if TERMS_AGREE_CHECKBOX_SELECTOR:
                 try:
-                    agree_checkbox_locator = page.locator(TERMS_AGREEE_CHECKBOX_SELECTOR).first # Note: Typo in original, corrected here if used
+                    agree_checkbox_locator = page.locator(TERMS_AGREE_CHECKBOX_SELECTOR).first
                     if agree_checkbox_locator.is_visible(timeout=5000):
                         if not agree_checkbox_locator.is_checked():
                             print("Clicking 'I agree' checkbox on T&C page...")
@@ -142,15 +140,14 @@ def run_bot():
             else:
                 print("No 'I agree' checkbox selector defined for T&C page, skipping checkbox step.")
 
-            # Click the "Accept" button on the T&C page using the exact ID you provided
-            terms_accept_button_locator = page.locator(TERMS_CONTINUE_BUTTON_SELECTOR) # Uses the updated exact ID
+            terms_accept_button_locator = page.locator(TERMS_CONTINUE_BUTTON_SELECTOR)
             terms_accept_button_locator.wait_for(state="enabled", timeout=10000)
             print(f"Clicking 'Accept' button on T&C page (selector: '{TERMS_CONTINUE_BUTTON_SELECTOR}')...")
             terms_accept_button_locator.click()
             # === End of T&C Page Handling ===
 
             # Now, wait for Page 2 (CleanBookingDE.xhtml)
-            page.wait_for_url(f"**/{PAGE2_URL_FRAGMENT}**", timeout=30000)
+            page.wait_for_url(f"**/{PAGE2_URL_FRAGMENT}**", timeout=30000) # Default waitUntil is 'load' here, which is usually fine for subsequent pages
             print(f"Successfully navigated past T&C. On Page 2 (Details Entry). URL: {page.url}")
 
             # Page 2 Actions
