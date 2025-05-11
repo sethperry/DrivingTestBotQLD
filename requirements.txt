@@ -1,4 +1,3 @@
 playwright
 requests
-# python-dotenv (Not strictly needed if only running on GitHub Actions with secrets,
-# but good to have if you ever test locally with a .env file)
+# python-dotenv (Optional: useful for local testing with a .env file, not strictly needed if only running on GitHub Actions with secrets)
