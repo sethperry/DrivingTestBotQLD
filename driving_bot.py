@@ -15,6 +15,8 @@ USER_CONTACT_PHONE = os.getenv("USER_CONTACT_PHONE")
 # --- Constants for the Bot ---
 START_URL = "https://www.service.transport.qld.gov.au/SBSExternal/public/WelcomeDrivingTest.xhtml"
 CONTINUE_BUTTON_PAGE1_ID = "j_id_60:aboutThisServiceForm:continueButton"
+
+# Page 2 - Details Entry
 PAGE2_URL_FRAGMENT = "CleanBookingDE.xhtml"
 DL_NUMBER_INPUT_ID = "CleanBookingDEForm:dlNumber"
 CONTACT_NAME_INPUT_ID = "CleanBookingDEForm:contactName"
@@ -22,11 +24,17 @@ CONTACT_PHONE_INPUT_ID = "CleanBookingDEForm:contactPhone"
 TEST_TYPE_DROPDOWN_ID = "CleanBookingDEForm:productType" # Main ID for the dropdown component
 TEST_TYPE_OPTION_CAR_ID = "CleanBookingDEForm:productType_1"
 CONTINUE_BUTTON_PAGE2_ID = "CleanBookingDEForm:actionFieldList:confirmButtonField:confirmButton"
+
+# Page 3 - Confirmation
 PAGE3_URL_FRAGMENT = "LicenceDetailsConfirmation.xhtml"
 CONTINUE_BUTTON_PAGE3_ID = "BookingConfirmationForm:actionFieldList:confirmButtonField:confirmButton"
+
+# Page 4 - Location Selection
 PAGE4_URL_FRAGMENT = "LocationSelection.xhtml"
 REGION_DROPDOWN_ID = "BookingSearchForm:region" # Main ID for the region dropdown component
 CONTINUE_BUTTON_PAGE4_ID = "BookingSearchForm:actionFieldList:confirmButtonField:confirmButton"
+
+# Page 5 - Slot Selection
 PAGE5_URL_FRAGMENT = "SlotSelection.xhtml"
 SLOT_LABEL_SELECTOR = "label[for^='slotSelectionForm:slotTable:']"
 SLOT_TABLE_ID = "slotSelectionForm:slotTable"
@@ -43,8 +51,6 @@ def send_telegram_notification(message):
         print("ERROR: Telegram Bot Token or Chat ID is not configured as a GitHub Secret.")
         return False
     
-    # Basic MarkdownV2 escaping for Telegram
-    # Characters that need escaping for MarkdownV2: _ * [ ] ( ) ~ ` > # + - = | { } . !
     md_reserved = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     escaped_message = message
     for char in md_reserved:
@@ -55,7 +61,7 @@ def send_telegram_notification(message):
     
     try:
         response = requests.post(api_url, data=payload, timeout=10)
-        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+        response.raise_for_status() 
         print("Telegram notification sent successfully.")
         return True
     except requests.exceptions.RequestException as e:
@@ -70,7 +76,7 @@ def check_slots_on_page5(page, location_name):
         page.locator(f"id={SLOT_TABLE_ID}").wait_for(state="visible", timeout=15000)
     except PlaywrightTimeoutError:
         print(f"Slot table not found for {location_name}.")
-        return suitable_slots # Return empty list
+        return suitable_slots
 
     slot_labels = page.locator(SLOT_LABEL_SELECTOR).all()
     if not slot_labels:
@@ -79,18 +85,16 @@ def check_slots_on_page5(page, location_name):
 
     current_check_date = datetime.now().date()
     start_date_window = current_check_date
-    end_date_window = start_date_window + timedelta(days=13) # 14-day window (today + 13 more days)
+    end_date_window = start_date_window + timedelta(days=13) 
 
     for label_loc in slot_labels:
         slot_text = label_loc.text_content(timeout=5000).strip()
-        if not slot_text: continue # Skip empty labels
+        if not slot_text: continue
         try:
-            # Example slot_text: "Wednesday, 25 June 2025 1:55 PM"
             slot_datetime_obj = datetime.strptime(slot_text, "%A, %d %B %Y %I:%M %p")
             if start_date_window <= slot_datetime_obj.date() <= end_date_window:
                 suitable_slots.append(slot_text)
         except ValueError:
-            # Silently ignore if a label's text doesn't match the expected date format
             pass 
     
     if suitable_slots:
@@ -103,108 +107,85 @@ def check_slots_on_page5(page, location_name):
 def run_bot():
     print(f"Bot run started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # Check if critical secrets are loaded
     if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, USER_DL_NUMBER, USER_CONTACT_NAME, USER_CONTACT_PHONE]):
-        print("CRITICAL ERROR: One or more required secrets (Telegram info, User Details) are missing. Please set them in your GitHub repository secrets.")
-        # Try to send a Telegram notification about this critical configuration error
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID: # Only if token/chat_id themselves are set
-             send_telegram_notification("Driving Test Bot CRITICAL ERROR: Required secrets like user details (DL number etc.) are not fully configured in GitHub Actions.")
-        return # Stop execution
+        critical_error_msg = "Driving Test Bot CRITICAL ERROR: Required secrets (Telegram/User Details) are not fully configured in GitHub Actions."
+        print(critical_error_msg)
+        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID: send_telegram_notification(critical_error_msg)
+        return 
 
     try:
-        # Attempt to set locale for date parsing (e.g., "Wednesday", "June")
         locale.setlocale(locale.LC_TIME, 'en_AU.UTF-8')
     except locale.Error:
-        print("Warning: Australian locale 'en_AU.UTF-8' not available, using system default. Date parsing might be affected if day/month names are not standard English.")
+        print("Warning: Australian locale 'en_AU.UTF-8' not available.")
 
-    any_slot_found_overall = False # To track if we should send a "no slots found at all" message
-    browser = None # Initialize browser to None for robust finally block
+    any_slot_found_overall = False
+    browser = None 
     
     with sync_playwright() as p:
         try:
-            browser = p.chromium.launch(headless=True) # Headless is essential for GitHub Actions
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
-            )
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36")
             page = context.new_page()
 
-            # --- Navigate through initial pages (Page 1, 2, 3) ---
-            page.goto(START_URL, timeout=60000) # Allow 60s for initial load
+            # --- Page 1: Welcome Page ---
+            page.goto(START_URL, timeout=60000)
             page.locator(f"id={CONTINUE_BUTTON_PAGE1_ID}").click()
-            page.wait_for_url(f"**/{PAGE2_URL_FRAGMENT}**", timeout=30000)
+            
+            # --- Directly to Page 2: Details Entry (CleanBookingDE.xhtml) ---
+            # Removed the intermediate TermsAndConditions page handling based on your feedback.
+            page.wait_for_url(f"**/{PAGE2_URL_FRAGMENT}**", timeout=30000) 
+            print(f"On Page 2 (Details Entry). URL: {page.url}")
 
             # Page 2 Actions
             page.locator(f"id={DL_NUMBER_INPUT_ID}").fill(USER_DL_NUMBER)
             page.locator(f"id={CONTACT_NAME_INPUT_ID}").fill(USER_CONTACT_NAME)
             page.locator(f"id={CONTACT_PHONE_INPUT_ID}").fill(USER_CONTACT_PHONE)
-            
-            # === THIS IS THE CORRECTED SECTION for the Test Type Dropdown ===
-            # Original TEST_TYPE_DROPDOWN_ID is like "CleanBookingDEForm:productType"
-            # We want to create a CSS selector like "#CleanBookingDEForm\:productType .ui-selectonemenu-trigger"
-            escaped_test_type_dropdown_id = TEST_TYPE_DROPDOWN_ID.replace(':', '\\:') # Creates "FormID\:ComponentID"
+            escaped_test_type_dropdown_id = TEST_TYPE_DROPDOWN_ID.replace(':', '\\:')
             test_type_dropdown_trigger_selector = f"#{escaped_test_type_dropdown_id} .ui-selectonemenu-trigger"
             page.locator(test_type_dropdown_trigger_selector).click()
-            # === END OF CORRECTION ===
-            
             page.locator(f"id={TEST_TYPE_OPTION_CAR_ID}").click()
-            page.wait_for_timeout(200) # Brief pause for JS if any
+            page.wait_for_timeout(200) 
             page.locator(f"id={CONTINUE_BUTTON_PAGE2_ID}").click()
 
+            # Page 3 Actions
             page.wait_for_url(f"**/{PAGE3_URL_FRAGMENT}**", timeout=30000)
             page.locator(f"id={CONTINUE_BUTTON_PAGE3_ID}").click()
             
-            # Should land on Page 4 (LocationSelection.xhtml)
+            # Page 4 Actions (start of loop)
             page.wait_for_url(f"**/{PAGE4_URL_FRAGMENT}**", timeout=30000)
             print("Initial navigation to Location Selection page successful.")
 
-            # --- Loop through specified locations ---
             for i, location in enumerate(LOCATIONS_TO_CHECK):
                 current_location_name = location['name']
                 current_location_id = location['id']
                 print(f"--- Processing location: {current_location_name} ---")
-
-                # Ensure we are on the Location Selection page (Page 4)
                 if not PAGE4_URL_FRAGMENT in page.url:
                      page.wait_for_url(f"**/{PAGE4_URL_FRAGMENT}**", timeout=30000)
-
-                # Page 4 Actions: Select region and continue
-                # The main dropdown component ID is REGION_DROPDOWN_ID
-                # The clickable trigger is a child of this with class '.ui-selectonemenu-trigger'
                 page.locator(f"id={REGION_DROPDOWN_ID}").locator(".ui-selectonemenu-trigger").click()
-                page.locator(f"id={current_location_id}").click() # Click the specific region option
-                page.wait_for_timeout(500) # Allow selection to register (JS heavy site)
+                page.locator(f"id={current_location_id}").click()
+                page.wait_for_timeout(500) 
                 page.locator(f"id={CONTINUE_BUTTON_PAGE4_ID}").click()
+                page.wait_for_url(f"**/{PAGE5_URL_FRAGMENT}**", timeout=45000)
                 
-                # Wait for Page 5 (Slot Selection)
-                page.wait_for_url(f"**/{PAGE5_URL_FRAGMENT}**", timeout=45000) # Allow more time for slots to load
-                
-                slots_found_this_location = check_slots_on_page5(page, current_location_name)
-                
-                if slots_found_this_location:
+                slots_found = check_slots_on_page5(page, current_location_name)
+                if slots_found:
                     any_slot_found_overall = True
-                    # Construct message for Telegram
-                    message_parts = [f"*Driving Test Slots Found: {current_location_name}*"] # Markdown: Bold for location
-                    for slot in slots_found_this_location:
-                        # Basic escaping for slot text before adding to message (send_telegram_notification will do final pass)
-                        escaped_slot_text_for_message = slot
+                    message_parts = [f"*Driving Test Slots Found: {current_location_name}*"]
+                    for slot in slots_found:
+                        escaped_slot = slot
                         for char_esc in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
-                             escaped_slot_text_for_message = escaped_slot_text_for_message.replace(char_esc, '\\' + char_esc)
-                        message_parts.append(f"  • _{escaped_slot_text_for_message}_") # Markdown: Italic for slot
-
-                    message_parts.append("\nBook now\\!") # Escape the '!' for MarkdownV2
-                    notification_message = "\n".join(message_parts)
-                    send_telegram_notification(notification_message)
+                             escaped_slot = escaped_slot.replace(char_esc, '\\' + char_esc)
+                        message_parts.append(f"  • _{escaped_slot}_")
+                    message_parts.append("\nBook now\\!")
+                    send_telegram_notification("\n".join(message_parts))
                 
-                # If not the last location, click "Change location selection" to go back to Page 4
                 if i < len(LOCATIONS_TO_CHECK) - 1:
                     print(f"Changing location from {current_location_name}...")
                     page.locator(f"id={CHANGE_LOCATION_BUTTON_PAGE5_ID}").click()
-                    page.wait_for_url(f"**/{PAGE4_URL_FRAGMENT}**", timeout=30000) # Wait to return to location page
+                    page.wait_for_url(f"**/{PAGE4_URL_FRAGMENT}**", timeout=30000)
             
             if not any_slot_found_overall:
                 print("No suitable slots found in any of the specified locations during this run.")
-                # Optionally, send a "no slots found overall" message if you want one daily, for example.
-                # send_telegram_notification("Driving Test Bot: No new slots found in any locations during this check.")
 
         except PlaywrightTimeoutError as pte:
             error_message = f"BOT TIMEOUT ERROR: {pte}."
@@ -212,7 +193,6 @@ def run_bot():
             print(error_message)
             send_telegram_notification(error_message)
         except Exception as e:
-            # Get line number for better debugging
             tb_lineno = e.__traceback__.tb_lineno if e.__traceback__ else 'N/A'
             error_message = f"BOT UNEXPECTED ERROR: {type(e).__name__} - {e} (Line: {tb_lineno})."
             if 'page' in locals() and page and page.url: error_message += f" Last URL: {page.url}"
